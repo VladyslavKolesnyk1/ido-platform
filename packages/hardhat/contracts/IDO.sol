@@ -8,37 +8,40 @@ import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 contract IDO is Ownable {
     uint256 public totalDeposited;
 
+    mapping(address user => uint256) public userClaims;
+    mapping(address user => uint256) public userTotalDeposits;
+    mapping(address user => mapping(token => uint256)) public userDeposits;
+    mapping(address token => AggregatorV3Interface) public tokenPriceFeeds;
+
+    uint256[] immutable public vestings;
+    address[] immutable public tokens;
+
+    uint256 immutable public cliff;
+    uint256 immutable public tokenPrice;
+    uint256 immutable public softCap;
     uint256 immutable public maxCap;
     uint256 immutable public maxAllocation;
     uint256 immutable public minAllocation;
     uint256 immutable public startTime;
     uint256 immutable public endTime;
     address immutable public token;
-    uint256 immutable public tokenPrice;
     uint8 immutable public tokenDecimals;
-    uint256 immutable public cliff;
-    uint256[] immutable public vestings;
 
     uint8 constant public COMMON_DECIMALS = 18;
 
-    mapping(address user => uint256) public userClaimed;
-    mapping(address user => uint256) public userDeposits;
-    mapping(address token => AggregatorV3Interface) public tokenPriceFeeds;
-
-    modifier whenActive() {
-        require(block.timestamp >= startTime && block.timestamp <= endTime, "IDO: not active");
-        _;
-    }
-
     modifier afterCliffPeriod() {
         require(block.timestamp > endTime + cliff, "IDO: not finished");
+        require(totalDeposited >= softCap, "IDO: soft cap not reached");
         _;
     }
 
     constructor(
-        address[] memory tokens,
-        address[] memory dataFeeds,
+        address[] memory _tokens,
+        address[] memory _dataFeeds,
+        address[] memory _vestings,
+        uint256 _cliff,
         uint256 _tokenPrice,
+        uint256 _softCap,
         uint256 _maxCap,
         uint256 _maxAllocation,
         uint256 _minAllocation,
@@ -47,40 +50,43 @@ contract IDO is Ownable {
         address _token,
         address owner
     ) Ownable(owner){
-        require(tokens.length == dataFeeds.length, "IDO: invalid data feeds length");
+        require(_minAllocation <= _maxAllocation, "IDO: invalid allocation range");
+        require(_startTime < _endTime, "IDO: invalid time range");
+        require(_softCap <= _maxCap, "IDO: invalid cap range");
+        require(_vestings.length > 0, "IDO: no vestings");
+        require(_tokens.length == _dataFeeds.length, "IDO: invalid data feeds length");
 
-        for(uint256 i = 0; i < tokens.length;) {
-            tokenPriceFeeds[tokens[i]] = AggregatorV3Interface(dataFeeds[i]);
+        for(uint256 i = 0; i < _tokens.length;) {
+            tokenPriceFeeds[_tokens[i]] = AggregatorV3Interface(_dataFeeds[i]);
 
             unchecked {
                 ++i;
             }
         }
 
-        cliff = 30 days;
-        vestings = [1000, 2000, 3000, 4000];
+        tokens = _tokens;
+        vestings = _vestings;
 
-        tokenDecimals = ERC20(_token).decimals();
+        cliff = _cliff;
         tokenPrice = _tokenPrice;
+        softCap = _softCap;
         maxCap = _maxCap;
         maxAllocation = _maxAllocation;
         minAllocation = _minAllocation;
         startTime = _startTime;
         endTime = _endTime;
         token = _token;
+        tokenDecimals = ERC20(_token).decimals();
     }
 
-    fallback() external payable {
-    }
-
-    receive() external payable {
-    }
-
-    function deposit(uint256 _amount, address _depositToken) external whenActive  {
+    function deposit(uint256 _amount, address _depositToken) external {
+        require(block.timestamp >= startTime && block.timestamp <= endTime, "IDO: not active");
         require(address(tokenPriceFeeds[_depositToken]) != address(0), "IDO: token not supported");
 
+        ERC20(_depositToken).transferFrom(msg.sender, address(this), _amount);
+
         uint256 convertedAmount = _convertPrice(_amount, _depositToken);
-        uint256 newAmount = userDeposits[msg.sender] + convertedAmount;
+        uint256 newAmount = userTotalDeposits[msg.sender] + convertedAmount;
 
         require(newAmount >= minAllocation, "IDO: amount is less than min allocation");
         require(newAmount <= maxAllocation, "IDO: amount exceeds max allocation");
@@ -89,38 +95,62 @@ contract IDO is Ownable {
 
         require(totalDeposited <= maxCap, "IDO: amount exceeds max cap");
 
-        userDeposits[msg.sender] = newAmount;
-
-        ERC20(_depositToken).transferFrom(msg.sender, address(this), _amount);
+        userTotalDeposits[msg.sender] = newAmount;
+        userDeposits[msg.sender][_depositToken] += _amount;
     }
 
     function claim() external afterCliffPeriod {
-        uint256 claimable = availableToClaim(msg.sender);
+        uint256 claimable = _availableToClaim(msg.sender);
 
         require(claimable > 0, "IDO: nothing to claim");
 
-        userClaimed[msg.sender] += claimable;
+        userClaims[msg.sender] += claimable;
 
         ERC20(token).transfer(msg.sender, claimable);
     }
 
-    function availableToClaim(address _user) public view returns (uint256) {
-        uint256 amountToClaim = 0;
-        uint256 total = totalToClaim(_user);
-        uint256 percentageVested = _getPercentageVested();
+    function withdraw() external {
+        require(block.timestamp > endTime, "IDO: not finished");
+        require(totalDeposited < softCap, "IDO: soft cap reached");
+        require(userTotalDeposits[msg.sender] > 0, "IDO: nothing to withdraw");
 
-        return amountToClaim = (total * percentageVested / 10000) - userClaimed[_user];
+        userTotalDeposits[msg.sender] = 0;
+
+        for(uint256 i = 0; i < tokens.length;) {
+            address token = tokens[i];
+            uint256 balance = userDeposits[msg.sender][token];
+
+            userDeposits[msg.sender][token] = 0;
+
+            ERC20(token).transfer(msg.sender, balance);
+
+            unchecked {
+                ++i;
+            }
+        }
     }
 
-    function totalToClaim() public view returns (uint256 total) {
-        uint256 depositAmount = userDeposits[msg.sender];
+    function availableToClaim(address _user) external view afterCliffPeriod returns (uint256, uint256)  {
+        return (_availableToClaim(_user), _totalToClaim(_user));
+    }
+
+    function _availableToClaim(address _user) private view returns (uint256) {
+        uint256 amountToClaim = 0;
+        uint256 total = _totalToClaim(_user);
+        uint256 percentageVested = _getPercentageVested();
+
+        return amountToClaim = (total * percentageVested / 10000) - userClaims[_user];
+    }
+
+    function _totalToClaim() private view returns (uint256 total) {
+        uint256 depositAmount = userTotalDeposits[msg.sender];
 
         total = depositAmount * 10**tokenDecimals / tokenPrice;
     }
 
     function _getPercentageVested() public view returns (uint256) {
         uint256 totalPercentage = 0;
-        uint256 vestingEnd = endTime + cliff + 30 days;
+        uint256 vestingEnd = endTime + cliff;
 
         for(uint256 i = 0; i < vestings.length;) {
             if(vestingEnd > block.timestamp) {

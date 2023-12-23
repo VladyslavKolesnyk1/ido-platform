@@ -3,21 +3,33 @@ import { DeployFunction } from "hardhat-deploy/types";
 
 const deployYourContract: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const { deployer } = await hre.getNamedAccounts();
-  const { deploy, fixture } = hre.deployments;
-  let purchaseToken = process.env.PURCHASE_TOKEN_ADDRESS;
+  const { deploy } = hre.deployments;
+  let depositToken = process.env.SALE_TOKEN_ADDRESS;
   let idoToken = process.env.IDO_TOKEN_ADDRESS;
 
   if (hre.network.name === "localhost") {
-    await fixture(["mocks"]);
+    const depositTokenMock = await deploy("DepositTokenMock", {
+      from: deployer,
+      args: [6],
+      log: true,
+      autoMine: true,
+    });
 
-    purchaseToken = (await hre.ethers.getContract("PurchaseTokenMock")).address;
-    idoToken = (await hre.ethers.getContract("IDOTokenMock")).address;
+    const idoTokenMock = await deploy("IDOTokenMock", {
+      from: deployer,
+      args: [12],
+      log: true,
+      autoMine: true,
+    });
+
+    depositToken = depositTokenMock.address;
+    idoToken = idoTokenMock.address;
   }
 
   await deploy("IDO", {
     from: deployer,
     args: [
-      [purchaseToken],
+      [depositToken],
       ["0x3E7d1eAB13ad0104d2750B8863b489D65364e32D"],
       "50000000000000000",
       "1000000000000000000000",

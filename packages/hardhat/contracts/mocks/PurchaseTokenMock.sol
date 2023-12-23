@@ -3,10 +3,10 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-contract DepositTokenMock is ERC20 {
+contract PurchaseTokenMock is ERC20 {
     uint8 immutable public tokenDecimals;
 
-    constructor(uint8 _decimals) ERC20("TokenMock", "TKN") {
+    constructor(uint8 _decimals) ERC20("PurchaseTokenMock", "PTM") {
         tokenDecimals = _decimals;
     }
 

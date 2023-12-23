@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 contract IDOTokenMock is ERC20 {
     uint8 immutable public tokenDecimals;
 
-    constructor(uint8 _decimals) ERC20("TokenMock", "TKN") {
+    constructor(uint8 _decimals) ERC20("IDOTokenMock", "ITM") {
         tokenDecimals = _decimals;
     }
 
