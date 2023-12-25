@@ -12,7 +12,7 @@
     "lint-staged": "eslint --config ./.eslintrc.json --ignore-path ./.eslintignore",
     "test": "REPORT_GAS=true hardhat test --network hardhat",
     "verify": "hardhat etherscan-verify",
-    "calculate": "hardhat run scripts/calculate.ts"
+    "prettier:fix": "prettier --write \"contracts/**/*.sol\"  \"scripts/**/*.ts\" \"hardhat.config.ts\" \"deploy/**/*.ts\""
   },
   "dependencies": {
     "@chainlink/contracts": "^0.8.0",
@@ -48,6 +48,7 @@
     "hardhat-deploy": "~0.11.31",
     "hardhat-gas-reporter": "~1.0.9",
     "prettier": "~2.8.4",
+    "prettier-plugin-solidity": "^1.1.3",
     "solidity-coverage": "~0.8.2",
     "ts-node": "~10.9.1",
     "typechain": "~8.1.0",

@@ -6,83 +6,131 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
+/// @title Raffle Initial DEX Offering (IDO) Contract
+/// @notice This contract manages a raffle-style IDO, where users purchase tickets to participate
 contract RaffleIDO is Ownable {
-    mapping(address user => uint256) public userTickets;
+	mapping(address user => uint256) public userTickets;
 
-    bytes32 public merkleRoot;
-    uint256 immutable public ticketPrice;
-    uint256 immutable public minTickets;
-    uint256 immutable public maxTickets;
-    uint256 immutable public startTime;
-    uint256 immutable public endTime;
-    uint256 immutable public sharePerTicket;
-    address immutable public purchaseToken;
-    address immutable public idoToken;
+	bytes32 public merkleRoot;
+	uint256 public immutable ticketPrice;
+	uint256 public immutable minTickets;
+	uint256 public immutable maxTickets;
+	uint256 public immutable startTime;
+	uint256 public immutable endTime;
+	uint256 public immutable sharePerTicket;
+	address public immutable purchaseToken;
+	address public immutable idoToken;
 
-    constructor(
-        uint256 _ticketPrice,
-        uint256 _minTickets,
-        uint256 _maxTickets,
-        uint256 _startTime,
-        uint256 _endTime,
-        uint256 _sharePerTicket,
-        address _purchaseToken,
-        address _idoToken,
-        address _owner
-    ) Ownable(_owner){
-        require(_minTickets <= _maxTickets, "IDO: invalid tickets range");
-        require(_startTime < _endTime, "IDO: invalid time range");
+	event Deposit(address indexed user, uint256 amount);
+	event Claim(address indexed user, uint256 amount);
+	event ClaimRefund(address indexed user, uint256 amount);
 
-        ticketPrice = _ticketPrice;
-        minTickets = _minTickets;
-        maxTickets = _maxTickets;
-        startTime = _startTime;
-        endTime = _endTime;
-        sharePerTicket = _sharePerTicket;
-        purchaseToken = _purchaseToken;
-        idoToken = _idoToken;
-    }
+	/// @param _ticketPrice Price of each ticket in purchaseToken
+	/// @param _minTickets Minimum number of tickets required for participation
+	/// @param _maxTickets Maximum number of tickets a user can purchase
+	/// @param _startTime Start time of the IDO
+	/// @param _endTime End time of the IDO
+	/// @param _sharePerTicket Number of idoTokens distributable per winning ticket
+	/// @param _purchaseToken Address of the token used for purchasing tickets
+	/// @param _idoToken Address of the token being sold in the IDO
+	/// @param _owner Owner of the IDO contract
+	constructor(
+		uint256 _ticketPrice,
+		uint256 _minTickets,
+		uint256 _maxTickets,
+		uint256 _startTime,
+		uint256 _endTime,
+		uint256 _sharePerTicket,
+		address _purchaseToken,
+		address _idoToken,
+		address _owner
+	) Ownable(_owner) {
+		require(_minTickets <= _maxTickets, "RaffleIDO: invalid tickets range");
+		require(_startTime < _endTime, "RaffleIDO: invalid time range");
 
-    function setMerkleRoot(bytes32 _merkleRoot) external onlyOwner {
-        require(block.timestamp > endTime, "IDO: not finished");
-        merkleRoot = _merkleRoot;
-    }
+		ticketPrice = _ticketPrice;
+		minTickets = _minTickets;
+		maxTickets = _maxTickets;
+		startTime = _startTime;
+		endTime = _endTime;
+		sharePerTicket = _sharePerTicket;
+		purchaseToken = _purchaseToken;
+		idoToken = _idoToken;
+	}
 
-    function deposit(uint256 _tickets) external {
-        require(block.timestamp >= startTime && block.timestamp <= endTime, "IDO: not active");
+	/// @notice Sets the Merkle root for the raffle
+	/// @param _merkleRoot The Merkle root representing the raffle winners
+	function setMerkleRoot(bytes32 _merkleRoot) external onlyOwner {
+		require(block.timestamp > endTime, "RaffleIDO: not finished");
+		merkleRoot = _merkleRoot;
+	}
 
-        uint256 tickets = userTickets[msg.sender];
-        uint256 newTickets = tickets + _tickets;
+	/// @notice Allows users to deposit funds in exchange for tickets
+	/// @param _tickets Number of tickets to purchase
+	function deposit(uint256 _tickets) external {
+		require(
+			block.timestamp >= startTime && block.timestamp <= endTime,
+			"RaffleIDO: not active"
+		);
 
-        require(newTickets >= minTickets && newTickets <= maxTickets, "IDO: invalid tickets amount");
+		uint256 tickets = userTickets[msg.sender];
+		uint256 newTickets = tickets + _tickets;
 
-        uint256 amount = _tickets * ticketPrice;
+		require(
+			newTickets >= minTickets && newTickets <= maxTickets,
+			"RaffleIDO: invalid tickets amount"
+		);
 
-        ERC20(purchaseToken).transferFrom(msg.sender, address(this), amount);
+		uint256 amount = _tickets * ticketPrice;
 
-        userTickets[msg.sender] = newTickets;
-    }
+		ERC20(purchaseToken).transferFrom(msg.sender, address(this), amount);
 
-    function claim(uint256 winningTicketsAmount, bytes32[] calldata merkleProof) external {
-        require(block.timestamp > endTime, "IDO: not finished");
+		userTickets[msg.sender] = newTickets;
 
-        uint256 userTicketsAmount = userTickets[msg.sender];
-        require(userTicketsAmount > 0, "IDO: nothing to claim");
+		emit Deposit(msg.sender, amount);
+	}
 
-        bytes32 node = keccak256(abi.encodePacked(msg.sender, winningTicketsAmount));
-        require(MerkleProof.verify(merkleProof, merkleRoot, node), "IDO: invalid merkle proof");
+	/// @notice Allows users to claim their rewards or refunds after the IDO ends
+	/// @param winningTicketsAmount Number of user's winning tickets
+	/// @param merkleProof Merkle proof to validate the winning tickets
+	function claim(
+		uint256 winningTicketsAmount,
+		bytes32[] calldata merkleProof
+	) external {
+		require(block.timestamp > endTime, "RaffleIDO: not finished");
 
-        uint256 refundTickets = userTicketsAmount - winningTicketsAmount;
-        userTickets[msg.sender] = 0;
+		uint256 userTicketsAmount = userTickets[msg.sender];
+		require(userTicketsAmount > 0, "RaffleIDO: nothing to claim");
 
-        if (refundTickets > 0) {
-            uint256 refundAmount = refundTickets * ticketPrice;
-            ERC20(purchaseToken).transfer(msg.sender, refundAmount);
-        }
+		bytes32 node = keccak256(
+			abi.encodePacked(msg.sender, winningTicketsAmount)
+		);
+		require(
+			MerkleProof.verify(merkleProof, merkleRoot, node),
+			"RaffleIDO: invalid merkle proof"
+		);
 
-        if(winningTicketsAmount > 0) {
-            uint256 claimable = winningTicketsAmount * sharePerTicket;
-            ERC20(idoToken).transfer(msg.sender, claimable);
-        }
-    }
+		uint256 refundTickets = userTicketsAmount - winningTicketsAmount;
+		userTickets[msg.sender] = 0;
+
+		if (refundTickets > 0) {
+			uint256 refundAmount = refundTickets * ticketPrice;
+			ERC20(purchaseToken).transfer(msg.sender, refundAmount);
+
+			emit ClaimRefund(msg.sender, refundAmount);
+		}
+
+		if (winningTicketsAmount > 0) {
+			uint256 claimable = winningTicketsAmount * sharePerTicket;
+			ERC20(idoToken).transfer(msg.sender, claimable);
+
+			emit Claim(msg.sender, claimable);
+		}
+	}
+
+	/// @notice Withdraws tokens from the contract by the owner
+	/// @param amount Amount of tokens to be withdrawn
+	function withdraw(uint256 amount) external onlyOwner {
+		ERC20(purchaseToken).transfer(owner(), amount);
+	}
 }

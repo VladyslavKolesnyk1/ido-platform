@@ -1,7 +1,7 @@
 import { HardhatRuntimeEnvironment } from "hardhat/types";
 import { DeployFunction } from "hardhat-deploy/types";
 
-const deployContract: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
+const deploy: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const { deployer } = await hre.getNamedAccounts();
   const { deploy } = hre.deployments;
 
@@ -13,6 +13,6 @@ const deployContract: DeployFunction = async function (hre: HardhatRuntimeEnviro
   });
 };
 
-export default deployContract;
+export default deploy;
 
-deployContract.tags = ["IDOTokenMock", "mocks"];
+deploy.tags = ["IDOTokenMock", "mocks"];
